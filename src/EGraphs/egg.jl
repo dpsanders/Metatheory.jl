@@ -2,6 +2,7 @@
 # https://dl.acm.org/doi/10.1145/3434304
 
 using DataStructures
+using StaticArrays
 
 """
 Abstract type representing an [`EGraph`](@ref) analysis,
@@ -10,10 +11,10 @@ an EGraph
 """
 abstract type AbstractAnalysis end
 
-const ClassMem = Dict{Int64,Vector{Any}}
+const ClassMem = Dict{Int64, AbstractVector{Any}}
 const HashCons = Dict{Any,Int64}
 const Parent = Tuple{Any,Int64} # parent enodes and eclasses
-const ParentMem = Dict{Int64,Vector{Parent}}
+const ParentMem = Dict{Int64,AbstractVector{Parent}}
 const AnalysisData = Dict{Int64,Any}
 const Analyses = Vector{AbstractAnalysis}
 
@@ -56,9 +57,9 @@ end
 function addparent!(G::EGraph, a::Int64, parent::Parent)
     @assert isenode(parent[1])
     if !haskey(G.parents, a)
-        G.parents[a] = [parent]
+        G.parents[a] = SA[parent]
     else
-        union!(G.parents[a], [parent])
+        G.parents[a] = G.parents[a] ∪ SA[parent]
     end
 end
 
@@ -73,11 +74,11 @@ function add!(G::EGraph, n)::EClass
     end
     @debug(n, " not found in H")
     id = push!(G.U) # create new singleton eclass
-    !haskey(G.parents, id) && (G.parents[id] = [])
+    !haskey(G.parents, id) && (G.parents[id] = SA[])
     getfunargs(n) .|> x -> addparent!(G, x.id, (n, id))
 
     G.H[n] = id
-    G.M[id] = [n]
+    G.M[id] = SA[n]
 
     # make analyses for new enode
     for analysis ∈ G.analyses
@@ -102,10 +103,10 @@ function addexpr!(G::EGraph, e)::EClass
 end
 
 function mergeparents!(G::EGraph, from::Int64, to::Int64)
-    !haskey(G.parents, from) && (G.parents[from] = []; return)
-    !haskey(G.parents, to) && (G.parents[to] = [])
+    !haskey(G.parents, from) && (G.parents[from] = SA[]; return)
+    !haskey(G.parents, to) && (G.parents[to] = SA[])
 
-    union!(G.parents[to], G.parents[from])
+    G.parents[to] = G.parents[to] ∪ G.parents[from]
     delete!(G.parents, from)
 end
 
@@ -236,6 +237,7 @@ function repair!(G::EGraph, id::Int64)
 end
 
 
+# TODO iterative version
 """
 Recursive function that traverses an [`EGraph`](@ref) and
 returns a vector of all reachable e-classes from a given e-class id.
