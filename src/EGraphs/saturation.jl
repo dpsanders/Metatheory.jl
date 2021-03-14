@@ -73,9 +73,6 @@ addexprinst!(g::EGraph, e, sub::Sub, side::Symbol)::EClass =
     addexprinst_rec!(g, preprocess(e), sub, side)
 
 # @memoize
-function sataddexpr!(g::EGraph, e)
-    addexpr!(g,e)
-end
 
 function cached_ids(egraph::EGraph, side)::Vector{Int64}
     # outermost symbol in rule side
@@ -123,8 +120,50 @@ end
 function eqsat_apply!(egraph::EGraph, matches::MatchesBuf,
         scheduler::AbstractScheduler, report::Report,
         mod::Module, sizeout::Int64, stopwhen::Function)::Report
+
+
+    instbuf = Array{Tuple{Any,Any}}(undef,length(matches))
+    # instbuf_lock=Condition()
+
+    Threads.@threads for i ∈ 1:length(matches)
+        (rule, sub) = matches[i]
+        writestep!(scheduler, rule)
+
+        if rule.mode == :rewrite || rule.mode == :equational # symbolic replacement
+            l = inst(rule.left, sub, :left)
+            r = inst(rule.right, sub, :right)
+
+            instbuf[i] = (l,r)
+
+            if rule.mode == :equational
+                # swap
+                r = inst(rule.left, sub, :right)
+                l = inst(rule.right, sub, :left)
+                instbuf[i] = (l,r)
+            end
+
+        elseif rule.mode == :dynamic # execute the right hand!
+            l = inst(rule.left, sub, :left)
+            (params, f) = rule.right_fun[mod]
+            actual_params = map(params) do x
+                (eclass, literal) = sub[x]
+                literal != nothing ? literal : eclass
+            end
+            r = f(l, egraph, actual_params...)
+
+            instbuf[i] = (l,r)
+        else
+            error("unsupported rule mode")
+        end
+
+        # println(rule)
+        # println(sub)
+        # println(l); println(r)
+        # display(egraph.M); println()
+    end
+
     i = 0
-    for (rule, sub) ∈ matches
+    for (l, r) ∈ instbuf
         i += 1
 
         if i % 300 == 0
@@ -140,58 +179,9 @@ function eqsat_apply!(egraph::EGraph, matches::MatchesBuf,
                 return report
             end
         end
-
-        writestep!(scheduler, rule)
-
-        if rule.mode == :rewrite || rule.mode == :equational # symbolic replacement
-            l = inst(rule.left, sub, :left)
-            r = inst(rule.right, sub, :right)
-            # l = remove_assertions(rule.left)
-            # r = rule.right
-            # r = unquote_sym(rule.right)
-            # lc = addexprinst!(egraph, l, sub, :left)
-            # rc = addexprinst!(egraph, r, sub, :right)
-            lc = sataddexpr!(egraph, l)
-            rc = sataddexpr!(egraph, r)
-            merge!(egraph, lc.id, rc.id)
-
-            if rule.mode == :equational
-                # swap
-                r = inst(rule.left, sub, :right)
-                l = inst(rule.right, sub, :left)
-                # r = unquote_sym(rule.left)
-                # r = rule.left
-                # l = remove_assertions(rule.right)
-                lc = sataddexpr!(egraph, l)
-                rc = sataddexpr!(egraph, r)
-                # lc = addexprinst!(egraph, l, sub, :left)
-                # rc = addexprinst!(egraph, r, sub. :right)
-                merge!(egraph, lc.id, rc.id)
-            end
-
-        elseif rule.mode == :dynamic # execute the right hand!
-            l = inst(rule.left, sub, :left)
-            # l = remove_assertions(rule.left)
-            lc = sataddexpr!(egraph, l)
-            # rc = addexpr!(egraph, r)
-            # lc = addexprinst!(egraph, l, sub, :left)
-
-            (params, f) = rule.right_fun[mod]
-            actual_params = map(params) do x
-                (eclass, literal) = sub[x]
-                literal != nothing ? literal : eclass
-            end
-            r = f(lc, egraph, actual_params...)
-            rc = sataddexpr!(egraph, r)
-            merge!(egraph,lc.id,rc.id)
-        else
-            error("unsupported rule mode")
-        end
-
-        # println(rule)
-        # println(sub)
-        # println(l); println(r)
-        # display(egraph.M); println()
+        lc = addexpr!(egraph, l)
+        rc = addexpr!(egraph, r)
+        merge!(egraph,lc.id,rc.id)
     end
     return report
 end
